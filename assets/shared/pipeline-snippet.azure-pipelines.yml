@@ -16,6 +16,15 @@
 - powershell: |
     $ErrorActionPreference = "Stop"
 
+    # Defense-in-depth: skip if the latest commit was made by this pipeline.
+    # Azure Pipelines honors [skip ci] but this guard catches the case where
+    # the marker is stripped or ignored.
+    $subject = git log -1 --pretty=format:'%s'
+    if ($subject -match '^docs:' -and $subject -match '\[skip ci\]') {
+      Write-Host "Pipeline-generated commit detected, skipping documentation update."
+      exit 0
+    }
+
     # Source file globs — adjust for your language(s).
     $sourceGlobs = @(
       '*.cs', '*.fs', '*.vb',
@@ -115,6 +124,13 @@
 
 - powershell: |
     $ErrorActionPreference = "Stop"
+
+    # Defense-in-depth: skip if the latest commit was made by this pipeline.
+    $subject = git log -1 --pretty=format:'%s'
+    if ($subject -match '^docs:' -and $subject -match '\[skip ci\]') {
+      Write-Host "Pipeline-generated commit detected, skipping changelog update."
+      exit 0
+    }
 
     if (!(Test-Path "docs/CHANGELOG.md")) {
       Write-Host "docs/CHANGELOG.md not found, skipping changelog update."
