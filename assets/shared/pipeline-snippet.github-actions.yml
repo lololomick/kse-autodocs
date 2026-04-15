@@ -1,0 +1,173 @@
+# ============================================================
+# Auto-documentation + changelog via Copilot CLI
+# Save as .github/workflows/auto-docs.yml (or merge into an existing workflow).
+# Required: repository secret COPILOT_PAT (GitHub PAT with repo scope).
+# ============================================================
+
+name: Auto-update documentation
+
+on:
+  push:
+    branches: [main, master, develop, Development]
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Detect changed source files
+        id: diff
+        shell: bash
+        run: |
+          CHANGED=$(git diff HEAD~1 --name-only -- \
+            '*.cs' '*.fs' '*.vb' \
+            '*.ts' '*.tsx' '*.js' '*.jsx' \
+            '*.py' \
+            '*.rs' \
+            '*.go' \
+            '*.java' '*.kt' \
+            '*.rb' '*.php' '*.swift')
+          if [ -z "$CHANGED" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Changed files:"
+            echo "$CHANGED"
+          fi
+
+      - name: Auto-update documentation
+        if: steps.diff.outputs.has_changes == 'true'
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          set -e
+
+          if [ ! -f docs/AUTHORING.md ] || [ ! -f docs/TEMPLATE.md ]; then
+            echo "::warning::docs/AUTHORING.md or docs/TEMPLATE.md missing. Run /docs-init locally first. Skipping."
+            exit 0
+          fi
+
+          mkdir -p docs
+
+          PROMPT=$(cat <<'EOF'
+          You are updating documentation in the docs/ folder after a commit.
+
+          1. Read docs/AUTHORING.md. It is the authoring guide. Follow it strictly.
+          2. Read docs/TEMPLATE.md. It is the structural template for any new doc.
+          3. Run: git diff HEAD~1 -- <source-globs>
+          4. For each changed source file:
+             a. Read the full source file (not just the diff).
+             b. Locate its matching component doc under docs/.
+             c. If the doc exists: update ONLY the sections whose subject actually changed. Preserve existing correct prose.
+             d. If the doc does not exist: SKIP it. Bootstrap is not the job of this pipeline.
+             e. If the change adds/removes enum values, error codes, or state values: update the matching reference doc in docs/Reference/ AND every inline mention in other docs.
+          5. Write all output files directly under docs/.
+
+          Do NOT:
+          - Create docs for files not in the diff.
+          - Invent content the source does not support.
+          - Add Further reading / History / TODO sections.
+          - Use emojis.
+          EOF
+          )
+
+          copilot -p "$PROMPT" \
+            --allow-tool='shell(git:*)' \
+            --allow-tool=read \
+            --allow-tool=write \
+            --allow-tool=glob \
+            --no-ask-user
+
+      - name: Commit documentation changes
+        if: steps.diff.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain docs/)" ]; then
+            git config user.email "pipeline@ci.local"
+            git config user.name "CI Pipeline"
+            git add docs/
+            git commit -m "docs: auto-update documentation [skip ci]"
+            git push
+          else
+            echo "No documentation changes."
+          fi
+
+      - name: Auto-update changelog
+        if: always()
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          set -e
+          if [ ! -f docs/CHANGELOG.md ]; then
+            echo "docs/CHANGELOG.md not found, skipping."
+            exit 0
+          fi
+
+          SHA=$(git rev-parse --short HEAD)
+          AUTHOR=$(git log -1 --pretty=format:'%an <%ae>')
+          DATE=$(git log -1 --pretty=format:'%ad' --date=iso-strict)
+          SUBJECT=$(git log -1 --pretty=format:'%s')
+          DIFFSTAT=$(git diff HEAD~1 --stat)
+
+          PROMPT=$(cat <<EOF
+          You are appending one entry to docs/CHANGELOG.md for the latest commit.
+
+          Commit metadata:
+          - SHA: $SHA
+          - Author: $AUTHOR
+          - Date: $DATE
+          - Subject: $SUBJECT
+
+          Commit diff summary:
+          $DIFFSTAT
+
+          Rules:
+          - Open docs/CHANGELOG.md.
+          - Find the marker '<!-- pipeline:insert-below -->' and insert the new entry DIRECTLY BELOW it (newest entries on top).
+          - Entry format:
+            ### $SHA — $DATE
+            **Author:** $AUTHOR
+            **Change:** {one-sentence human summary of what the commit changes. Focus on WHY, not WHAT.}
+            {optional: bullet list of 2-4 notable changes, each one short line}
+          - Do NOT duplicate an entry that is already present with the same SHA.
+          - Do NOT rewrite existing entries.
+          - Write the file back.
+          EOF
+          )
+
+          copilot -p "$PROMPT" \
+            --allow-tool='shell(git:*)' \
+            --allow-tool=read \
+            --allow-tool=write \
+            --no-ask-user
+
+      - name: Commit changelog
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain docs/CHANGELOG.md)" ]; then
+            git config user.email "pipeline@ci.local"
+            git config user.name "CI Pipeline"
+            git add docs/CHANGELOG.md
+            git commit -m "docs: update changelog [skip ci]"
+            git push
+          else
+            echo "No changelog changes."
+          fi

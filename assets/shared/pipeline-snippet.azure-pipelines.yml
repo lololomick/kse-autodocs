@@ -1,0 +1,155 @@
+# ============================================================
+# Auto-documentation + changelog via Copilot CLI
+# Append this to your azure-pipelines.yml.
+# Required: pipeline variable COPILOT_PAT (GitHub PAT with repo scope).
+# ============================================================
+
+- task: NodeTool@0
+  displayName: 'Setup Node.js for Copilot CLI'
+  inputs:
+    versionSpec: '20.x'
+
+- powershell: |
+    npm install -g @github/copilot
+  displayName: 'Install Copilot CLI'
+
+- powershell: |
+    $ErrorActionPreference = "Stop"
+
+    # Source file globs — adjust for your language(s).
+    $sourceGlobs = @(
+      '*.cs', '*.fs', '*.vb',
+      '*.ts', '*.tsx', '*.js', '*.jsx',
+      '*.py',
+      '*.rs',
+      '*.go',
+      '*.java', '*.kt',
+      '*.rb',
+      '*.php',
+      '*.swift'
+    )
+
+    $diff = git diff HEAD~1 --name-only -- @sourceGlobs
+    if (-not $diff) {
+      Write-Host "No source code changes detected, skipping documentation update."
+      exit 0
+    }
+
+    Write-Host "Changed source files:"
+    Write-Host $diff
+
+    if (!(Test-Path "docs/AUTHORING.md")) {
+      Write-Host "##vso[task.logissue type=warning]docs/AUTHORING.md not found. Run /docs-init locally first. Skipping."
+      exit 0
+    }
+    if (!(Test-Path "docs/TEMPLATE.md")) {
+      Write-Host "##vso[task.logissue type=warning]docs/TEMPLATE.md not found. Run /docs-init locally first. Skipping."
+      exit 0
+    }
+
+    if (!(Test-Path "docs")) { New-Item -ItemType Directory -Path "docs" | Out-Null }
+
+    $prompt = @"
+    You are updating documentation in the docs/ folder after a commit.
+
+    1. Read docs/AUTHORING.md. It is the authoring guide. Follow it strictly.
+    2. Read docs/TEMPLATE.md. It is the structural template for any new doc.
+    3. Run: git diff HEAD~1 -- <source-globs>
+    4. For each changed source file:
+       a. Read the full source file (not just the diff).
+       b. Locate its matching component doc under docs/.
+       c. If the doc exists: update ONLY the sections whose subject actually changed. Preserve existing correct prose.
+       d. If the doc does not exist: SKIP it. Bootstrap is not the job of this pipeline.
+       e. If the change adds/removes enum values, error codes, or state values: update the matching reference doc in docs/Reference/ AND every inline mention in other docs.
+    5. Write all output files directly under docs/.
+
+    Do NOT:
+    - Create docs for files not in the diff.
+    - Invent content the source does not support.
+    - Add Further reading / History / TODO sections.
+    - Use emojis.
+    "@
+
+    copilot -p $prompt ``
+      --allow-tool='shell(git:*)' ``
+      --allow-tool=read ``
+      --allow-tool=write ``
+      --allow-tool=glob ``
+      --no-ask-user
+
+    $status = git status --porcelain docs/
+    if ($status) {
+      git config user.email "pipeline@ci.local"
+      git config user.name "CI Pipeline"
+      git add docs/
+      git commit -m "docs: auto-update documentation [skip ci]"
+      git push origin HEAD:$(Build.SourceBranchName)
+      Write-Host "Documentation committed and pushed."
+    } else {
+      Write-Host "No documentation changes needed."
+    }
+  displayName: 'Auto-update documentation'
+  env:
+    COPILOT_GITHUB_TOKEN: $(COPILOT_PAT)
+  continueOnError: true
+
+- powershell: |
+    $ErrorActionPreference = "Stop"
+
+    if (!(Test-Path "docs/CHANGELOG.md")) {
+      Write-Host "docs/CHANGELOG.md not found, skipping changelog update."
+      exit 0
+    }
+
+    $sha = git rev-parse --short HEAD
+    $author = git log -1 --pretty=format:'%an <%ae>'
+    $date = git log -1 --pretty=format:'%ad' --date=iso-strict
+    $subject = git log -1 --pretty=format:'%s'
+    $bodyDiff = git diff HEAD~1 --stat
+
+    $prompt = @"
+    You are appending one entry to docs/CHANGELOG.md for the latest commit.
+
+    Commit metadata:
+    - SHA: $sha
+    - Author: $author
+    - Date: $date
+    - Subject: $subject
+
+    Commit diff summary:
+    $bodyDiff
+
+    Rules:
+    - Open docs/CHANGELOG.md.
+    - Find the marker '<!-- pipeline:insert-below -->' and insert the new entry DIRECTLY BELOW it (newest entries on top).
+    - Entry format:
+      ### $sha — $date
+      **Author:** $author
+      **Change:** {one-sentence human summary of what the commit changes. Focus on WHY, not WHAT.}
+      {optional: bullet list of 2-4 notable changes, each one short line}
+    - Do NOT duplicate an entry that is already present with the same SHA.
+    - Do NOT rewrite existing entries.
+    - Write the file back.
+    "@
+
+    copilot -p $prompt ``
+      --allow-tool='shell(git:*)' ``
+      --allow-tool=read ``
+      --allow-tool=write ``
+      --no-ask-user
+
+    $status = git status --porcelain docs/CHANGELOG.md
+    if ($status) {
+      git config user.email "pipeline@ci.local"
+      git config user.name "CI Pipeline"
+      git add docs/CHANGELOG.md
+      git commit -m "docs: update changelog [skip ci]"
+      git push origin HEAD:$(Build.SourceBranchName)
+      Write-Host "Changelog committed and pushed."
+    } else {
+      Write-Host "No changelog changes."
+    }
+  displayName: 'Auto-update changelog'
+  env:
+    COPILOT_GITHUB_TOKEN: $(COPILOT_PAT)
+  continueOnError: true
