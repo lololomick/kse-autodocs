@@ -1,5 +1,5 @@
 ---
-mode: agent
+agent: agent
 description: Scaffold the docs/ directory, authoring guide, template, changelog, and CI pipeline integration for automated documentation. Run once per repository.
 ---
 

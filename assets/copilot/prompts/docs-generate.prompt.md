@@ -1,5 +1,5 @@
 ---
-mode: agent
+agent: agent
 description: Bootstrap or resume documentation for the existing codebase. Respects a session cap and can be re-run across multiple chats to cover a large project.
 ---
 
