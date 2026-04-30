@@ -1,6 +1,6 @@
 {
   "name": "@lololomick/livedocs",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "description": "Scaffold and maintain living developer documentation in a consistent, human-readable style. Installs slash commands for Claude Code and / or GitHub Copilot.",
   "bin": {
     "livedocs": "bin/install.js"
